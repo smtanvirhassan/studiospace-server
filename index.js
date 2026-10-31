@@ -808,67 +808,98 @@ app.delete("/api/bookings/:id", verifyToken, deleteBookingHandler);
 // WISHLIST (Optional Requirement 2)
 // -----------------------------------------------------------------------------
 
-app.get("/wishlist/:email", verifyToken, async (req, res) => {
+const getWishlistHandler = async (req, res) => {
   try {
-    const { email } = req.params;
+    const email = req.params.email || req.user?.email || req.query.email;
+    if (!email) {
+      return res.status(400).json({ message: "User email is required" });
+    }
+
     if (wishlistCollection) {
       const results = await wishlistCollection
         .find({ userEmail: email })
         .toArray();
-      return res.json(results);
+      // If client requests raw ids (like Explore Studios)
+      const ids = results.map((w) => String(w.studioId));
+      return res.json(ids);
     }
     const results = inMemoryWishlist.filter((w) => w.userEmail === email);
-    res.json(results);
+    res.json(results.map((w) => String(w.studioId)));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+};
+app.get("/wishlist/:email", verifyToken, getWishlistHandler);
+app.get("/api/wishlist", verifyToken, getWishlistHandler);
+app.get("/api/wishlist/:email", verifyToken, getWishlistHandler);
 
-app.post("/wishlist", verifyToken, async (req, res) => {
+const postWishlistHandler = async (req, res) => {
   try {
-    const { userEmail, studioId, studio } = req.body;
+    const { studioId, studio } = req.body;
+    const userEmail = req.body.userEmail || req.user?.email;
+
     if (!userEmail || !studioId) {
       return res.status(400).json({ message: "userEmail and studioId are required" });
     }
 
     if (wishlistCollection) {
-      const exists = await wishlistCollection.findOne({ userEmail, studioId });
-      if (exists) return res.json(exists);
-      const entry = { userEmail, studioId, studio, createdAt: new Date() };
-      const result = await wishlistCollection.insertOne(entry);
-      return res.status(201).json({ ...entry, _id: result.insertedId });
+      const existing = await wishlistCollection.findOne({
+        userEmail,
+        studioId: String(studioId),
+      });
+
+      if (existing) {
+        await wishlistCollection.deleteOne({ _id: existing._id });
+        return res.json({ saved: false, message: "Removed from wishlist" });
+      }
+
+      const entry = {
+        userEmail,
+        studioId: String(studioId),
+        studio: studio || null,
+        createdAt: new Date(),
+      };
+      await wishlistCollection.insertOne(entry);
+      return res.json({ saved: true, message: "Saved to wishlist" });
     }
 
-    const exists = inMemoryWishlist.find(
-      (w) => w.userEmail === userEmail && w.studioId === studioId
+    const idx = inMemoryWishlist.findIndex(
+      (w) => w.userEmail === userEmail && String(w.studioId) === String(studioId)
     );
-    if (exists) return res.json(exists);
+    if (idx !== -1) {
+      inMemoryWishlist.splice(idx, 1);
+      return res.json({ saved: false, message: "Removed from wishlist" });
+    }
+
     const entry = {
       _id: new ObjectId(),
       userEmail,
-      studioId,
-      studio,
+      studioId: String(studioId),
+      studio: studio || null,
       createdAt: new Date(),
     };
     inMemoryWishlist.push(entry);
-    res.status(201).json(entry);
+    res.json({ saved: true, message: "Saved to wishlist" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
+};
+app.post("/wishlist", verifyToken, postWishlistHandler);
+app.post("/api/wishlist", verifyToken, postWishlistHandler);
 
 app.delete("/wishlist/:email/:studioId", verifyToken, async (req, res) => {
   try {
-    const { email, studioId } = req.params;
+    const email = req.params.email || req.user?.email;
+    const { studioId } = req.params;
     if (wishlistCollection) {
       const result = await wishlistCollection.deleteOne({
         userEmail: email,
-        studioId,
+        studioId: String(studioId),
       });
       return res.json(result);
     }
     const idx = inMemoryWishlist.findIndex(
-      (w) => w.userEmail === email && w.studioId === studioId
+      (w) => w.userEmail === email && String(w.studioId) === String(studioId)
     );
     if (idx !== -1) inMemoryWishlist.splice(idx, 1);
     res.json({ acknowledged: true, deletedCount: 1 });
