@@ -22,13 +22,26 @@ export async function connectToMongoDB() {
 }
 
 // Middleware
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
 app.use(
   cors({
-    origin: [
-      "http://localhost:3000",
-      "http://127.0.0.1:3000",
-      "https://studio-space-client.vercel.app",
-    ],
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (
+        allowedOrigins.includes(origin) ||
+        origin.endsWith(".vercel.app") ||
+        origin.includes("localhost") ||
+        origin.includes("127.0.0.1")
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
     credentials: true,
   })
 );
@@ -60,13 +73,23 @@ const verifyToken = async (req, res, next) => {
   }
 
   try {
+    const originUrl = req.headers.origin || CLIENT_URL;
+    const targetUrl = originUrl.includes(".vercel.app") ? originUrl : CLIENT_URL;
     const JWKS = createRemoteJWKSet(
-      new URL(`${CLIENT_URL}/api/auth/jwks`)
+      new URL(`${targetUrl}/api/auth/jwks`)
     );
     const { payload } = await jwtVerify(token, JWKS);
     req.user = payload;
     next();
   } catch (error) {
+    try {
+      const JWKS = createRemoteJWKSet(
+        new URL(`${CLIENT_URL}/api/auth/jwks`)
+      );
+      const { payload } = await jwtVerify(token, JWKS);
+      req.user = payload;
+      return next();
+    } catch {}
     return res.status(401).send({ msg: "Unauthorized!" });
   }
 };
